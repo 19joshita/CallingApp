@@ -88,7 +88,7 @@ export default function ContactListScreen({ navigation }) {
             style={[styles.headerBtn, styles.simulateBtn]}
             onPress={simulateIncoming}
           >
-            <Text style={styles.headerBtnText}>Simulate Incoming</Text>
+            <Text style={styles.headerBtnText}> Incoming</Text>
           </TouchableOpacity>
         </View>
       </View>
