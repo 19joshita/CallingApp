@@ -6,29 +6,98 @@ import {
   ImageBackground,
   Dimensions,
   Animated,
+  Vibration,
+  PermissionsAndroid,
 } from 'react-native';
 import {
   PanGestureHandler,
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
 import { CallContext } from './../contexts/CallContext';
+import Sound from 'react-native-sound';
 
 const { width } = Dimensions.get('window');
 const BUTTON_SIZE = 70;
-const TRACK_WIDTH = width - 40; // total track width
-const MAX_SWIPE = (TRACK_WIDTH - BUTTON_SIZE) / 2; // max left/right swipe
-const THRESHOLD = MAX_SWIPE * 0.8; // distance to trigger accept/reject
+const TRACK_WIDTH = width - 40;
+const MAX_SWIPE = (TRACK_WIDTH - BUTTON_SIZE) / 2;
+const THRESHOLD = MAX_SWIPE * 0.8;
 
 export default function IncomingCallScreen({ navigation }) {
   const { incomingCall, setIncomingCall, setCurrentCall } =
     useContext(CallContext);
   const translateX = useRef(new Animated.Value(0)).current;
+  const ringtoneRef = useRef(null);
+  const vibrationIntervalRef = useRef(null);
+
+  // --- Request vibration permission ---
+  const requestVibrationPermission = async () => {
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.VIBRATE,
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (err) {
+      console.log('Vibration permission error:', err);
+      return false;
+    }
+  };
 
   useEffect(() => {
-    if (!incomingCall) navigation.goBack();
+    if (!incomingCall) {
+      navigation.goBack();
+      return;
+    }
+
+    // --- Play ringtone from Android raw folder ---
+    try {
+      ringtoneRef.current = new Sound(
+        'ringtone.mp3',
+        Sound.MAIN_BUNDLE,
+        error => {
+          if (error) {
+            console.log('Failed to load sound', error);
+            return;
+          }
+          ringtoneRef.current.setNumberOfLoops(-1);
+          ringtoneRef.current.play(success => {
+            if (!success) console.log('Playback failed');
+          });
+        },
+      );
+    } catch (err) {
+      console.log('Error initializing ringtone:', err);
+    }
+
+    // --- Vibrate if permission granted ---
+    requestVibrationPermission().then(granted => {
+      if (granted) {
+        vibrationIntervalRef.current = setInterval(() => {
+          Vibration.vibrate(800);
+        }, 1500);
+      } else {
+        console.log('Vibration permission denied');
+      }
+    });
+
+    // --- Cleanup on unmount ---
+    return () => {
+      if (ringtoneRef.current)
+        ringtoneRef.current.stop(() => ringtoneRef.current.release());
+      if (vibrationIntervalRef.current)
+        clearInterval(vibrationIntervalRef.current);
+      Vibration.cancel();
+    };
   }, [incomingCall]);
 
-  if (!incomingCall) return null;
+  if (!incomingCall) {
+    return (
+      <View
+        style={[styles.bg, { justifyContent: 'center', alignItems: 'center' }]}
+      >
+        <Text>No incoming call</Text>
+      </View>
+    );
+  }
 
   const onGestureEvent = Animated.event(
     [{ nativeEvent: { translationX: translateX } }],
@@ -40,6 +109,8 @@ export default function IncomingCallScreen({ navigation }) {
 
     if (translationX > THRESHOLD) {
       // Accept call
+      if (ringtoneRef.current)
+        ringtoneRef.current.stop(() => ringtoneRef.current.release());
       setCurrentCall({ ...incomingCall, startedAt: Date.now() });
       setIncomingCall(null);
       navigation.replace('Call', {
@@ -48,10 +119,12 @@ export default function IncomingCallScreen({ navigation }) {
       });
     } else if (translationX < -THRESHOLD) {
       // Reject call
+      if (ringtoneRef.current)
+        ringtoneRef.current.stop(() => ringtoneRef.current.release());
       setIncomingCall(null);
       navigation.goBack();
     } else {
-      // Reset to center
+      // Reset swipe button
       Animated.spring(translateX, {
         toValue: 0,
         useNativeDriver: true,
@@ -101,7 +174,6 @@ export default function IncomingCallScreen({ navigation }) {
               <Text style={styles.buttonText}>Accept</Text>
             </View>
 
-            {/* Draggable Swipe Button */}
             <PanGestureHandler
               onGestureEvent={onGestureEvent}
               onEnded={onGestureEnd}
@@ -109,9 +181,7 @@ export default function IncomingCallScreen({ navigation }) {
               <Animated.View
                 style={[
                   styles.swipeButton,
-                  {
-                    transform: [{ translateX: clampedTranslateX }],
-                  },
+                  { transform: [{ translateX: clampedTranslateX }] },
                 ]}
               >
                 <Text style={styles.phoneIcon}>📞</Text>
